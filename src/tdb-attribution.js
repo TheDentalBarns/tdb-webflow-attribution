@@ -1,0 +1,218 @@
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'tdb_attribution_v1';
+  const FORM_SELECTOR = 'form[ms-code-submit-form]';
+  const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+  const CONSENT_CATEGORY = 'performance';
+
+  const pageLoadedAt = Date.now();
+  const currentPath = window.location.pathname || '/';
+  const urlParams = new URLSearchParams(window.location.search);
+
+  function getParameter(...names) {
+    for (const name of names) {
+      const value = urlParams.get(name);
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function createAttributionId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return `tdb_${window.crypto.randomUUID()}`;
+    }
+
+    return `tdb_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  }
+
+  const currentCampaignData = {
+    utm_source: getParameter('utm_source'),
+    utm_medium: getParameter('utm_medium'),
+    utm_campaign: getParameter('utm_campaign'),
+    utm_content: getParameter('utm_content'),
+    utm_term: getParameter('utm_term'),
+    meta_campaign_id: getParameter('meta_campaign_id', 'campaign_id'),
+    meta_adset_id: getParameter('meta_adset_id', 'adset_id'),
+    meta_ad_id: getParameter('meta_ad_id', 'ad_id'),
+    meta_placement: getParameter('meta_placement', 'placement'),
+    fbclid: getParameter('fbclid')
+  };
+
+  let attribution = {
+    attribution_id: createAttributionId(),
+    first_landing_path: currentPath,
+    first_touch_at: new Date(pageLoadedAt).toISOString(),
+    initial_referrer: document.referrer || '',
+    visit_number: 1,
+    last_seen_at: pageLoadedAt,
+    ...currentCampaignData
+  };
+
+  function hasStorageConsent() {
+    try {
+      const state = window.CookieScript?.instance?.currentState?.();
+      return Boolean(state?.categories?.includes(CONSENT_CATEGORY));
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function readStoredAttribution() {
+    if (!hasStorageConsent()) return null;
+
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null');
+
+      if (!stored || typeof stored !== 'object' || !stored.attribution_id) {
+        return null;
+      }
+
+      return stored;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveAttribution() {
+    if (!hasStorageConsent()) return;
+
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(attribution));
+    } catch (error) {
+      // Attribution must never interfere with the site or form submission.
+    }
+  }
+
+  function activatePersistentAttribution() {
+    if (!hasStorageConsent()) return;
+
+    const stored = readStoredAttribution();
+
+    if (stored) {
+      attribution = stored;
+
+      const previousSeenAt = Number(attribution.last_seen_at) || 0;
+
+      if (previousSeenAt && pageLoadedAt - previousSeenAt > SESSION_TIMEOUT_MS) {
+        attribution.visit_number = (Number(attribution.visit_number) || 1) + 1;
+      }
+
+      attribution.last_seen_at = pageLoadedAt;
+
+      // Preserve first-touch campaign data, filling only values that were previously blank.
+      Object.entries(currentCampaignData).forEach(([key, value]) => {
+        if (value && !attribution[key]) attribution[key] = value;
+      });
+    }
+
+    saveAttribution();
+    refreshAllForms();
+  }
+
+  function findInput(form, fieldName) {
+    return Array.from(form.elements).find(element => element.name === fieldName);
+  }
+
+  function setHiddenField(form, fieldName, value) {
+    let input = findInput(form, fieldName);
+
+    if (!input) {
+      input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = fieldName;
+      input.autocomplete = 'off';
+      input.setAttribute('aria-hidden', 'true');
+      form.appendChild(input);
+    }
+
+    input.value = value === null || value === undefined ? '' : String(value);
+  }
+
+  function populateForm(form) {
+    const values = {
+      tdb_attribution_id: attribution.attribution_id,
+      tdb_first_landing_path: attribution.first_landing_path,
+      tdb_first_touch_at: attribution.first_touch_at,
+      tdb_initial_referrer: attribution.initial_referrer,
+      tdb_utm_source: attribution.utm_source,
+      tdb_utm_medium: attribution.utm_medium,
+      tdb_utm_campaign: attribution.utm_campaign,
+      tdb_utm_content: attribution.utm_content,
+      tdb_utm_term: attribution.utm_term,
+      tdb_meta_campaign_id: attribution.meta_campaign_id,
+      tdb_meta_adset_id: attribution.meta_adset_id,
+      tdb_meta_ad_id: attribution.meta_ad_id,
+      tdb_meta_placement: attribution.meta_placement,
+      tdb_fbclid: attribution.fbclid,
+      tdb_visit_number: attribution.visit_number,
+      tdb_submission_path: window.location.pathname || '/',
+      tdb_submitted_at: ''
+    };
+
+    Object.entries(values).forEach(([name, value]) => {
+      setHiddenField(form, name, value);
+    });
+  }
+
+  function bindForm(form) {
+    populateForm(form);
+
+    if (form.dataset.tdbAttributionBound === 'true') return;
+    form.dataset.tdbAttributionBound = 'true';
+
+    form.addEventListener(
+      'submit',
+      () => {
+        attribution.last_seen_at = Date.now();
+        saveAttribution();
+        populateForm(form);
+        setHiddenField(form, 'tdb_submission_path', window.location.pathname || '/');
+        setHiddenField(form, 'tdb_submitted_at', new Date().toISOString());
+      },
+      true
+    );
+  }
+
+  function refreshAllForms() {
+    document.querySelectorAll(FORM_SELECTOR).forEach(bindForm);
+  }
+
+  function inspectAddedNode(node) {
+    if (!(node instanceof Element)) return;
+
+    if (node.matches(FORM_SELECTOR)) bindForm(node);
+    node.querySelectorAll?.(FORM_SELECTOR).forEach(bindForm);
+  }
+
+  function startFormTracking() {
+    refreshAllForms();
+
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(mutation => {
+        mutation.addedNodes.forEach(inspectAddedNode);
+      });
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    activatePersistentAttribution();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startFormTracking, { once: true });
+  } else {
+    startFormTracking();
+  }
+
+  window.addEventListener('CookieScriptLoaded', activatePersistentAttribution);
+  window.addEventListener('CookieScriptAccept', activatePersistentAttribution);
+  window.addEventListener('CookieScriptAcceptAll', activatePersistentAttribution);
+  window.addEventListener(
+    `CookieScriptCategory-${CONSENT_CATEGORY}`,
+    activatePersistentAttribution
+  );
+})();
