@@ -1,0 +1,50 @@
+name: Build attribution distribution
+
+on:
+  push:
+    branches:
+      - feat/attribution-consent-v1.2.0
+    paths:
+      - src/tdb-attribution.js
+      - .github/workflows/build-attribution.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/attribution-consent-v1.2.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build distribution
+        run: |
+          cp src/tdb-attribution.js dist/tdb-attribution.js
+          npx --yes terser@5.31.6 src/tdb-attribution.js \
+            --compress \
+            --mangle \
+            --ecma 2020 \
+            --output dist/tdb-attribution.min.js
+          node --check dist/tdb-attribution.js
+          node --check dist/tdb-attribution.min.js
+
+      - name: Commit generated files
+        run: |
+          if git diff --quiet -- dist/tdb-attribution.js dist/tdb-attribution.min.js; then
+            echo "Distribution already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/tdb-attribution.js dist/tdb-attribution.min.js
+          git commit -m "build: publish attribution v1.2.0 distribution [skip ci]"
+          git push
