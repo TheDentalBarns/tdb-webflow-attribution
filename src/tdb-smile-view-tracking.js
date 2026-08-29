@@ -140,14 +140,25 @@
     const swiper = swiperEl?.swiper;
     if (!swiper || typeof swiper.on !== 'function') return false;
     attached.add(component);
-    let touchGesture = false;
-    swiper.on('touchStart', () => { touchGesture = true; });
-    swiper.on('slideChange', () => {
-      const slide = swiper.slides?.[swiper.activeIndex];
-      recordView(slide);
-      if (touchGesture) recordSwipe(swiper.swipeDirection === 'prev' ? 'prev' : 'next');
+    let touchSequence = 0;
+    let activeTouchSequence = 0;
+    let countedTouchSequence = 0;
+    swiper.on('touchStart', () => {
+      activeTouchSequence = ++touchSequence;
     });
-    swiper.on('touchEnd', () => { setTimeout(() => { touchGesture = false; }, 250); });
+    swiper.on('slideChange', () => {
+      recordView(swiper.slides?.[swiper.activeIndex]);
+      if (activeTouchSequence && countedTouchSequence !== activeTouchSequence) {
+        recordSwipe(swiper.swipeDirection === 'prev' ? 'prev' : 'next');
+        countedTouchSequence = activeTouchSequence;
+      }
+    });
+    swiper.on('touchEnd', () => {
+      const endedSequence = activeTouchSequence;
+      setTimeout(() => {
+        if (activeTouchSequence === endedSequence) activeTouchSequence = 0;
+      }, 0);
+    });
 
     if ('IntersectionObserver' in window && !observed.has(component)) {
       observed.add(component);
