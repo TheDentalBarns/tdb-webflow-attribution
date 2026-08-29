@@ -8,6 +8,7 @@ on:
       - src/tdb-attribution.js
       - src/tdb-intent-tracking.js
       - src/tdb-smile-view-tracking.js
+      - src/tdb-price-view-tracking.js
       - .github/workflows/build-attribution.yml
 
 permissions:
@@ -28,8 +29,8 @@ jobs:
 
       - name: Build distribution
         run: |
-          sed -i "s/const VERSION = '1.4.0';/const VERSION = '1.4.1';/" src/tdb-attribution.js
-          cat src/tdb-attribution.js src/tdb-intent-tracking.js src/tdb-smile-view-tracking.js > dist/tdb-attribution.js
+          sed -i "s/const VERSION = '1.4.1';/const VERSION = '1.5.0';/" src/tdb-attribution.js
+          cat src/tdb-attribution.js src/tdb-intent-tracking.js src/tdb-smile-view-tracking.js src/tdb-price-view-tracking.js > dist/tdb-attribution.js
           npx --yes terser@5.31.6 dist/tdb-attribution.js \
             --compress \
             --mangle \
@@ -38,6 +39,7 @@ jobs:
           node --check src/tdb-attribution.js
           node --check src/tdb-intent-tracking.js
           node --check src/tdb-smile-view-tracking.js
+          node --check src/tdb-price-view-tracking.js
           node --check dist/tdb-attribution.js
           node --check dist/tdb-attribution.min.js
 
@@ -50,5 +52,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/tdb-attribution.js dist/tdb-attribution.js dist/tdb-attribution.min.js
-          git commit -m "build: publish attribution v1.4.1 distribution [skip ci]"
+          git commit -m "build: publish attribution v1.5.0 distribution [skip ci]"
           git push
