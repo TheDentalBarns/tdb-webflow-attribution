@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const STORAGE_KEY = 'tdb_attribution_v2';
   const LEGACY_STORAGE_KEY = 'tdb_attribution_v1';
   const SESSION_STORAGE_KEY = 'tdb_attribution_session_v1';
