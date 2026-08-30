@@ -51,13 +51,13 @@
   }
 
   function recordView(item) {
-    if (!hasPerformanceConsent()) return;
+    if (!hasPerformanceConsent()) return false;
     const title = priceTitle(item);
-    if (!title) return;
+    if (!title) return false;
 
     const now = Date.now();
     const lastAt = Number(lastCountedAt.get(item)) || 0;
-    if (now - lastAt < 1500) return;
+    if (now - lastAt < 1500) return false;
     lastCountedAt.set(item, now);
 
     const state = readState();
@@ -68,6 +68,7 @@
     state.counts[title] = (Number(state.counts[title]) || 0) + 1;
     if (!state.items.includes(title) && state.items.length < MAX_UNIQUE_ITEMS) state.items.push(title);
     writeState(state);
+    return true;
   }
 
   function setHiddenField(form, name, value) {
@@ -100,24 +101,43 @@
     );
   }
 
+  function visibleRatio(element) {
+    if (!(element instanceof Element)) return 0;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return 0;
+    const width = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+    const height = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+    return (width * height) / (rect.width * rect.height);
+  }
+
+  function clearVisibilityTimer(item) {
+    const existingTimer = visibilityTimers.get(item);
+    if (existingTimer) clearTimeout(existingTimer);
+    visibilityTimers.delete(item);
+  }
+
+  function scheduleVisibleItem(item) {
+    if (!hasPerformanceConsent() || visibleRatio(item) < MIN_VISIBLE_RATIO) {
+      clearVisibilityTimer(item);
+      return;
+    }
+    if (visibilityTimers.get(item)) return;
+    const timer = setTimeout(() => {
+      visibilityTimers.delete(item);
+      if (visibleRatio(item) >= MIN_VISIBLE_RATIO) recordView(item);
+    }, MIN_VISIBLE_MS);
+    visibilityTimers.set(item, timer);
+  }
+
   const observer = 'IntersectionObserver' in window
     ? new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
           const item = entry.target;
-          const existingTimer = visibilityTimers.get(item);
-
           if (!entry.isIntersecting || entry.intersectionRatio < MIN_VISIBLE_RATIO) {
-            if (existingTimer) clearTimeout(existingTimer);
-            visibilityTimers.delete(item);
+            clearVisibilityTimer(item);
             return;
           }
-
-          if (existingTimer) return;
-          const timer = setTimeout(() => {
-            visibilityTimers.delete(item);
-            recordView(item);
-          }, MIN_VISIBLE_MS);
-          visibilityTimers.set(item, timer);
+          scheduleVisibleItem(item);
         });
       }, { threshold: [MIN_VISIBLE_RATIO] })
     : null;
@@ -126,12 +146,22 @@
     if (!(item instanceof Element) || observed.has(item)) return;
     observed.add(item);
     if (observer) observer.observe(item);
-    else recordView(item);
+    else scheduleVisibleItem(item);
   }
 
   function discover(root = document) {
     if (root instanceof Element && root.matches(PRICE_SELECTOR)) observeItem(root);
     root.querySelectorAll?.(PRICE_SELECTOR).forEach(observeItem);
+  }
+
+  function reevaluateVisiblePrices() {
+    if (!hasPerformanceConsent()) return;
+    document.querySelectorAll(PRICE_SELECTOR).forEach(scheduleVisibleItem);
+  }
+
+  function handleConsentChange() {
+    if (!hasPerformanceConsent()) return;
+    requestAnimationFrame(() => requestAnimationFrame(reevaluateVisiblePrices));
   }
 
   function start() {
@@ -149,6 +179,9 @@
     if (form instanceof HTMLFormElement && form.matches(FORM_SELECTOR)) populate(form);
   }, true);
   document.addEventListener('CookieScriptReject', clearState);
+  ['CookieScriptLoaded', 'CookieScriptAccept', 'CookieScriptAcceptAll', 'CookieScriptClose', 'CookieScriptCategory-performance'].forEach((eventName) => {
+    document.addEventListener(eventName, handleConsentChange);
+  });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 })();
