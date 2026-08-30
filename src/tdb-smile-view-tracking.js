@@ -6,8 +6,10 @@
   const GALLERY_SELECTOR = '.gallery17_component .highlight-swiper_component';
   const MAX_UNIQUE_ITEMS = 50;
   const SMILE_COLLECTION_PATH = '/smile-gallery/';
+  const MIN_VISIBLE_RATIO = 0.35;
   const attached = new WeakSet();
   const observed = new WeakSet();
+  const galleryObservers = new WeakMap();
 
   function hasPerformanceConsent() {
     try {
@@ -86,9 +88,9 @@
   }
 
   function recordView(slide) {
-    if (!slide || !hasPerformanceConsent()) return;
+    if (!slide || !hasPerformanceConsent()) return false;
     const { identifier, title, url } = metadata(slide);
-    if (!identifier) return;
+    if (!identifier) return false;
     const state = readState();
     state.items ||= []; state.counts ||= {}; state.titles ||= {}; state.urls ||= {};
     state.views = (Number(state.views) || 0) + 1;
@@ -97,9 +99,11 @@
     state.titles[identifier] = title; state.urls[identifier] = url;
     if (!state.items.includes(identifier) && state.items.length < MAX_UNIQUE_ITEMS) state.items.push(identifier);
     writeState(state);
+    return true;
   }
 
   function recordSwipe(direction) {
+    if (!hasPerformanceConsent()) return;
     const state = readState();
     state.swipes = (Number(state.swipes) || 0) + 1;
     if (direction === 'prev') state.swipePrev = (Number(state.swipePrev) || 0) + 1;
@@ -134,6 +138,32 @@
     setHiddenField(form, 'tdb_smile_swipe_prev', Number(state.swipePrev) || 0);
   }
 
+  function visibleRatio(element) {
+    if (!(element instanceof Element)) return 0;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return 0;
+    const width = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+    const height = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+    return (width * height) / (rect.width * rect.height);
+  }
+
+  function recordVisibleComponent(component) {
+    if (!hasPerformanceConsent() || visibleRatio(component) < MIN_VISIBLE_RATIO) return false;
+    const swiper = component.querySelector('.swiper')?.swiper;
+    if (!swiper) return false;
+    const recorded = recordView(swiper.slides?.[swiper.activeIndex]);
+    if (recorded) {
+      galleryObservers.get(component)?.disconnect();
+      galleryObservers.delete(component);
+    }
+    return recorded;
+  }
+
+  function reevaluateVisibleGalleries() {
+    if (!hasPerformanceConsent()) return;
+    document.querySelectorAll(GALLERY_SELECTOR).forEach(recordVisibleComponent);
+  }
+
   function attach(component) {
     if (!component || attached.has(component)) return Boolean(component);
     const swiperEl = component.querySelector('.swiper');
@@ -163,10 +193,13 @@
     if ('IntersectionObserver' in window && !observed.has(component)) {
       observed.add(component);
       const observer = new IntersectionObserver((entries, current) => {
-        if (!entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.35)) return;
-        recordView(swiper.slides?.[swiper.activeIndex]);
-        current.disconnect();
-      }, { threshold: [0.35] });
+        if (!entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= MIN_VISIBLE_RATIO)) return;
+        if (recordView(swiper.slides?.[swiper.activeIndex])) {
+          current.disconnect();
+          galleryObservers.delete(component);
+        }
+      }, { threshold: [MIN_VISIBLE_RATIO] });
+      galleryObservers.set(component, observer);
       observer.observe(component);
     }
     return true;
@@ -186,6 +219,11 @@
     });
   }
 
+  function handleConsentChange() {
+    if (!hasPerformanceConsent()) return;
+    requestAnimationFrame(() => requestAnimationFrame(reevaluateVisibleGalleries));
+  }
+
   function start() {
     discover();
     const observer = new MutationObserver((mutations) => {
@@ -201,6 +239,9 @@
     if (form instanceof HTMLFormElement && form.matches(FORM_SELECTOR)) populate(form);
   }, true);
   document.addEventListener('CookieScriptReject', clearState);
+  ['CookieScriptLoaded', 'CookieScriptAccept', 'CookieScriptAcceptAll', 'CookieScriptClose', 'CookieScriptCategory-performance'].forEach((eventName) => {
+    document.addEventListener(eventName, handleConsentChange);
+  });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();
 })();
