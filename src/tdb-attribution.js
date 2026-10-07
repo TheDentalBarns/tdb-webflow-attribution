@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
   const STORAGE_KEY = 'tdb_attribution_v2';
   const LEGACY_STORAGE_KEY = 'tdb_attribution_v1';
   const SESSION_STORAGE_KEY = 'tdb_attribution_session_v1';
@@ -220,14 +220,14 @@
   function readJson(storage, key) {
     if (!canUseStorage()) return null;
     try {
-      const value = JSON.parse(storage.getItem(key) || 'null');
+      const value = JSON.parse(window[storage].getItem(key) || 'null');
       return value && typeof value === 'object' ? value : null;
     } catch (error) { return null; }
   }
 
   function writeJson(storage, key, value) {
     if (!canUseStorage()) return;
-    try { storage.setItem(key, JSON.stringify(value)); } catch (error) {}
+    try { window[storage].setItem(key, JSON.stringify(value)); } catch (error) {}
   }
 
   function migrateLegacyAttribution(legacy) {
@@ -242,9 +242,9 @@
   }
 
   function readPersistentAttribution() {
-    const current = readJson(window.localStorage, STORAGE_KEY);
+    const current = readJson('localStorage', STORAGE_KEY);
     if (current?.attribution_id && current?.first_touch) return current;
-    return migrateLegacyAttribution(readJson(window.localStorage, LEGACY_STORAGE_KEY));
+    return migrateLegacyAttribution(readJson('localStorage', LEGACY_STORAGE_KEY));
   }
 
   function chooseIncomingTouch() {
@@ -281,7 +281,7 @@
 
   const incomingTouch = chooseIncomingTouch();
   let persistent = readPersistentAttribution();
-  let session = readJson(window.sessionStorage, SESSION_STORAGE_KEY);
+  let session = readJson('sessionStorage', SESSION_STORAGE_KEY);
   const previousSeenAt = Number(persistent?.last_seen_at) || 0;
   const timedOut = Boolean(previousSeenAt && pageLoadedAt - previousSeenAt > SESSION_TIMEOUT_MS);
 
@@ -305,8 +305,8 @@
   function saveState() {
     persistent.last_seen_at = Date.now();
     session.last_seen_at = persistent.last_seen_at;
-    writeJson(window.localStorage, STORAGE_KEY, persistent);
-    writeJson(window.sessionStorage, SESSION_STORAGE_KEY, session);
+    writeJson('localStorage', STORAGE_KEY, persistent);
+    writeJson('sessionStorage', SESSION_STORAGE_KEY, session);
   }
 
   function findInput(form, fieldName) {
@@ -416,7 +416,7 @@
   function activateStorage() {
     if (!canUseStorage()) { refreshAllForms(); return; }
     const stored = readPersistentAttribution();
-    const storedSession = readJson(window.sessionStorage, SESSION_STORAGE_KEY);
+    const storedSession = readJson('sessionStorage', SESSION_STORAGE_KEY);
     if (stored?.attribution_id && stored.first_touch) {
       persistent = stored;
       if (isMeaningfulNonDirectTouch(incomingTouch)) persistent.last_touch = incomingTouch;
