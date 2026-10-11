@@ -1,7 +1,9 @@
 (() => {
   'use strict';
 
-  const VERSION = '1.5.1';
+  if (window.TDBAttribution) return;
+
+  const VERSION = '1.5.2';
   const STORAGE_KEY = 'tdb_attribution_v2';
   const LEGACY_STORAGE_KEY = 'tdb_attribution_v1';
   const SESSION_STORAGE_KEY = 'tdb_attribution_session_v1';
@@ -309,18 +311,6 @@
     writeJson('sessionStorage', SESSION_STORAGE_KEY, session);
   }
 
-  function findInput(form, fieldName) {
-    return Array.from(form.elements).find(element => element.name === fieldName);
-  }
-
-  function setHiddenField(form, fieldName, value) {
-    let input = findInput(form, fieldName);
-    if (!input) {
-      input = document.createElement('input'); input.type = 'hidden'; input.name = fieldName; input.autocomplete = 'off'; input.setAttribute('aria-hidden', 'true'); form.appendChild(input);
-    }
-    input.value = value === null || value === undefined ? '' : String(value);
-  }
-
   function formValues() {
     const first = persistent.first_touch || {};
     const last = persistent.last_touch || first;
@@ -390,27 +380,45 @@
     };
   }
 
-  function populateForm(form) {
-    Object.entries(formValues()).forEach(([name, value]) => setHiddenField(form, name, value));
+  const preparedForms = new WeakSet();
+
+  function populateForm(form, values = formValues()) {
+    // Keep the existing flat payload, including empty strings and false values.
+    // Index once and append once; do not rescan a growing form for every field.
+    const inputs = new Map();
+    for (const input of form.elements) {
+      if (!inputs.has(input.name)) inputs.set(input.name, input);
+    }
+    const additions = document.createDocumentFragment();
+    for (const [name, value] of Object.entries(values)) {
+      let input = inputs.get(name);
+      if (!input) {
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.autocomplete = 'off';
+        input.setAttribute('aria-hidden', 'true');
+        additions.appendChild(input);
+      }
+      input.value = value === null || value === undefined ? '' : String(value);
+    }
+    if (additions.childNodes.length) form.appendChild(additions);
   }
 
-  function bindForm(form) {
-    populateForm(form);
-    if (form.dataset.tdbAttributionBound === 'true') return;
+  function prepareSubmission(event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.matches(FORM_SELECTOR)) return;
+    saveState();
+    populateForm(form, { ...formValues(), tdb_submitted_at: new Date().toISOString() });
+    preparedForms.add(form);
     form.dataset.tdbAttributionBound = 'true';
-    form.addEventListener('submit', () => {
-      saveState(); populateForm(form); setHiddenField(form, 'tdb_submission_path', currentPath); setHiddenField(form, 'tdb_submitted_at', new Date().toISOString());
-    }, true);
   }
 
   function refreshAllForms() {
-    document.querySelectorAll(FORM_SELECTOR).forEach(bindForm);
-  }
-
-  function inspectAddedNode(node) {
-    if (!(node instanceof Element)) return;
-    if (node.matches(FORM_SELECTOR)) bindForm(node);
-    node.querySelectorAll?.(FORM_SELECTOR).forEach(bindForm);
+    // Retain the public refresh API without materialising untouched forms.
+    document.querySelectorAll(FORM_SELECTOR).forEach(form => {
+      if (preparedForms.has(form)) populateForm(form);
+    });
   }
 
   function activateStorage() {
@@ -433,12 +441,12 @@
 
   function startFormTracking() {
     saveState();
-    refreshAllForms();
-    const observer = new MutationObserver(mutations => {
-      mutations.forEach(mutation => mutation.addedNodes.forEach(inspectAddedNode));
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
   }
+
+  // Capture runs before form-target validation/normalisation and Webflow's
+  // delegated submit serializer. No asynchronous work or submission interception.
+  // Delegation also covers forms inserted later, without observing the DOM.
+  document.addEventListener('submit', prepareSubmission, true);
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startFormTracking, { once: true });
   else startFormTracking();
