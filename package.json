@@ -1,0 +1,13 @@
+{
+  "name": "tdb-webflow-attribution",
+  "private": true,
+  "scripts": {
+    "build:core": "cp src/tdb-attribution.js dist/tdb-attribution.js && terser dist/tdb-attribution.js --compress --mangle --ecma 2020 --output dist/tdb-attribution.min.js",
+    "test": "node --test test/submit-fields.test.cjs"
+  },
+  "devDependencies": {
+    "jquery": "3.5.1",
+    "jsdom": "26.1.0",
+    "terser": "5.31.6"
+  }
+}
